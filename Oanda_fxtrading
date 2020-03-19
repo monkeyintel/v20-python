@@ -1,0 +1,81 @@
+import oandapyV20
+from oandapyV20 import API
+import oandapyV20.endpoints.instruments as instruments
+import oandapyV20.endpoints.accounts as accounts
+import pandas as pd
+from pandas.io.json import json_normalize
+import numpy as np
+
+symbols = ["EUR_USD" , "USD_JPY" , "EUR_JPY" , "AUD_USD" , "GBP_USD" , "AUD_JPY" , "EUR_GBP" ,
+            "ZAR_JPY" , "CAD_JPY" , "USD_CAD" , "USD_CHF" , "AUD_CAD" , "CAD_CHF" , "NZD_USD" ,
+            "EUR_CHF" , "TRY_JPY" , "SGD_JPY" , "AUD_CHF" , "NZD_JPY" , "SGD_CHF" , "EUR_CAD" ,
+            "USD_SGD" , "EUR_AUD" , "CHF_JPY" , "GBP_JPY" , "AUD_NZD" , "NZD_CAD" , "NZD_CHF" ,
+            "CAD_SGD" , "GBP_CHF" , "GBP_CAD" , "AUD_SGD" , "NZD_SGD" , "EUR_SGD" , "GBP_AUD" ,
+            "GBP_SGD" , "USD_THB" , "EUR_NZD" , "USD_INR" , "USD_HKD" , "EUR_DKK" , "GBP_NZD" ,
+            "USD_DKK" , "CAD_HKD" , "USD_CNH" , "SGD_HKD" , "AUD_HKD" , "EUR_HKD" , "NZD_HKD" ,
+            "GBP_HKD" , "CHF_HKD" , "HKD_JPY" , "USD_HUF" , "USD_PLN" , "EUR_HUF" , "USD_NOK" ,
+            "USD_TRY" , "EUR_PLN" , "EUR_NOK" , "USD_SEK" , "EUR_SEK" , "GBP_PLN" , "EUR_TRY" ,
+            "USD_MXN" , "USD_ZAR" , "CHF_ZAR" , "USD_CZK" , "EUR_ZAR" , "EUR_CZK" , "GBP_ZAR"]
+
+timeframes = ["M5","M10","M15"]
+startinglength = 50
+endinglength = 550
+offset = 50
+recentness = 40
+deviationlength = 100
+access = ''
+client = oandapyV20.API(access,'live')
+
+def main():
+    for symbol in symbols:
+        pointSize = getPointSize(symbol)
+        cleanSymbol = symbol.replace("_","")
+        print(cleanSymbol + (15 - len(cleanSymbol)) * " " + "\t"),
+        for timeframe in timeframes:
+            count = recentness + endinglength + deviationlength
+            params = {"count": count, "granularity": timeframe}
+            history = dataParser(client.request(instruments.InstrumentsCandles(symbol, params)))
+            volatilewavelength = 0
+            for wavelength in range(startinglength, endinglength, offset):
+                    volatile = volatility(history, wavelength, pointSize)
+                    if volatile:
+                        volatilewavelength = wavelength
+            if volatilewavelength != 0:
+                SMA = sum(history[len(history)-1-volatilewavelength:len(history)-1])/volatilewavelength
+                std = history[len(history)-1-volatilewavelength:len(history)-1].std()
+                if history[len(history)-1] >= (SMA + std) or history[len(history)-1] <= (SMA - std):
+                    print(timeframe + (4 - len(timeframe)) * " "),
+                else:
+                    print(4 * " "),
+            else:
+                print(4 * " "),
+        print(" ")
+
+
+def volatility(data, wavelength, pointSize):
+    standardDeviations = []
+    for i in range(deviationlength + recentness):
+        standardDeviations.append(1.25 * data[len(data) - wavelength - i - 1:len(data) - i - 1].std())
+    deviationSquared = [((dev/pointSize)**2) for dev in standardDeviations]
+
+    for i in range(recentness):
+        averageDevSquared = sum(deviationSquared[i:i + deviationlength])/len(deviationSquared[i:i + deviationlength])
+        temp = (averageDevSquared**(0.5)) * pointSize
+        if temp != 0: temp = standardDeviations[i]/temp
+        wpm = (1 - np.exp(-2 * temp))/(1 + np.exp(-2 * temp))
+        if temp < 0: wpm = (np.exp(2 * temp) - 1)/(1 + np.exp(2 * temp))
+        if wpm > 0.875:
+            return True
+    return False
+
+def dataParser(data):
+    df = pd.DataFrame(data['candles'])
+    df = df[df.complete == True]
+    df = json_normalize(df.drop(["complete","volume","time"], axis=1).mid)['c'].astype(float)
+    return df
+
+def getPointSize(symbol):
+    instrumentData = client.request(accounts.AccountInstruments(accountID="001-011-3543114-001", params={"instruments": symbol}))
+    return float(10**(-instrumentData["instruments"][0]["displayPrecision"]))
+
+main()
